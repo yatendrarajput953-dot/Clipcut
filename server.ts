@@ -10,6 +10,7 @@ import cors from 'cors';
 import { fileURLToPath } from 'url';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
+import archiver from 'archiver';
 
 if (ffmpegPath) {
   ffmpeg.setFfmpegPath(ffmpegPath);
@@ -289,6 +290,72 @@ app.get('/api/download-clip', (req, res) => {
       }
     })
     .pipe(res, { end: true });
+});
+
+// 5. Download All Clips (Zip)
+app.post('/api/download-all-clips', async (req, res) => {
+  const { filename, clips } = req.body;
+
+  if (!filename || !clips || !Array.isArray(clips)) {
+    return res.status(400).send('Missing required parameters: filename, clips');
+  }
+
+  const inputPath = path.join(UPLOADS_DIR, filename);
+  if (!fs.existsSync(inputPath)) {
+    return res.status(404).send('Original video file not found');
+  }
+
+  res.setHeader('Content-Disposition', `attachment; filename="all-clips-${filename}.zip"`);
+  res.setHeader('Content-Type', 'application/zip');
+
+  const archive = archiver('zip', {
+    zlib: { level: 9 } // Sets the compression level.
+  });
+
+  archive.on('error', function(err) {
+    console.error('Archiver error:', err);
+    if (!res.headersSent) {
+      res.status(500).send({error: err.message});
+    }
+  });
+
+  archive.pipe(res);
+
+  // Process each clip
+  for (let i = 0; i < clips.length; i++) {
+    const clip = clips[i];
+    const clipFilename = `${clip.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() || `clip-${i+1}`}.mp4`;
+    
+    // Create a pass-through stream for ffmpeg output
+    const passThrough = new (require('stream').PassThrough)();
+    
+    // Add the stream to the archive
+    archive.append(passThrough, { name: clipFilename });
+
+    // Run ffmpeg and pipe to the pass-through stream
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg(inputPath)
+        .setStartTime(clip.startTime)
+        .setDuration(calculateDuration(clip.startTime, clip.endTime))
+        .outputOptions('-c copy') // Fast copy without re-encoding
+        .format('mp4')
+        // outputOptions('-movflags frag_keyframe+empty_moov') is often needed for streaming mp4
+        .outputOptions('-movflags', 'frag_keyframe+empty_moov')
+        .on('error', (err) => {
+          console.error(`Error trimming video for clip ${i}:`, err);
+          reject(err);
+        })
+        .on('end', () => {
+          resolve();
+        })
+        .pipe(passThrough, { end: true });
+    }).catch(err => {
+      console.error('Failed to process clip', clipFilename, err);
+      // We continue with other clips even if one fails
+    });
+  }
+
+  archive.finalize();
 });
 
 function calculateDuration(start: string, end: string): number {

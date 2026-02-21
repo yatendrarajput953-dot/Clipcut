@@ -30,6 +30,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [activeClip, setActiveClip] = useState<Clip | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isDownloadingAll, setIsDownloadingAll] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0); // 0: Upload, 1: Process, 2: Analyze
   
@@ -252,6 +253,41 @@ export default function App() {
     }
   };
 
+  const handleDownloadAllClips = async () => {
+    if (!localFilename || !analysis?.clips) return;
+    
+    setIsDownloadingAll(true);
+    try {
+      const response = await fetch('/api/download-all-clips', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          filename: localFilename,
+          clips: analysis.clips
+        }),
+      });
+      
+      if (!response.ok) throw new Error('Failed to download all clips');
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `all-clips-${localFilename}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Download all error:', err);
+      alert('Failed to download all clips. Please try again.');
+    } finally {
+      setIsDownloadingAll(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-indigo-500/30">
       {/* Header */}
@@ -466,7 +502,21 @@ export default function App() {
 
               {/* Clips List */}
               <div className="space-y-4">
-                <h3 className="text-lg font-semibold text-white/80 px-2">Generated Clips</h3>
+                <div className="flex items-center justify-between px-2">
+                  <h3 className="text-lg font-semibold text-white/80">Generated Clips</h3>
+                  <button
+                    onClick={handleDownloadAllClips}
+                    disabled={isDownloadingAll || !analysis?.clips?.length}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 hover:text-indigo-200 transition-colors text-sm font-medium disabled:opacity-50"
+                  >
+                    {isDownloadingAll ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Download className="w-4 h-4" />
+                    )}
+                    Download All
+                  </button>
+                </div>
                 <div className="space-y-3">
                   {analysis.clips.map((clip, idx) => (
                     <button
